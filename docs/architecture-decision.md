@@ -59,7 +59,6 @@ Consolidate all board-specific ADU integration recipes into a single repository:
 - Code reviews can see cross-board impacts in a single PR.
 
 ### Negative
-- First build after migration will be a **full rebuild** (BitBake sstate cache keys include the recipe file path, which changes when recipes move to a new layer).
 - The legacy `meta-raspberrypi-adu`, `meta-qemu-adu`, and `meta-imx8ulp-adu` repos must be archived or marked deprecated.
 - `LAYERDEPENDS` only lists common dependencies; board-specific deps are implicitly required (enforced by `COMPATIBLE_MACHINE` and `BBFILES_DYNAMIC`).
 
