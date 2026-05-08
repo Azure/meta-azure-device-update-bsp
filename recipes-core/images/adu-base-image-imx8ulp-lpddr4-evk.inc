@@ -4,5 +4,7 @@ WKS_FILE = "imx8ulp-adu-ab.wks.in"
 IMAGE_FSTYPES += "wic wic.bmap ext4.gz"
 
 IMAGE_INSTALL += " \
+    kernel-image \
+    kernel-devicetree \
     imx8ulp-u-boot-scr \
 "

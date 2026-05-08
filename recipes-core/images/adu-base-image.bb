@@ -9,8 +9,6 @@ inherit core-image
 # Shared base packages for all ADU targets
 IMAGE_INSTALL += " \
     packagegroup-core-boot \
-    kernel-image \
-    kernel-devicetree \
     systemd \
     parted \
     zstd \

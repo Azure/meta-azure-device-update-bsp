@@ -4,6 +4,8 @@ WKS_FILE:raspberrypi4-64 = "adu-raspberrypi.wks"
 IMAGE_FSTYPES += "wic wic.bmap ext4.gz"
 
 IMAGE_INSTALL += " \
+    kernel-image \
+    kernel-devicetree \
     sudo \
     openssh-sshd openssh-sftp-server \
     connman connman-client \
