@@ -17,18 +17,11 @@ IMAGE_INSTALL += " \
 "
 
 # Shared image settings
-IMAGE_ROOTFS_EXTRA_SPACE = "0"
 NO_RECOMMENDATIONS = "1"
 
 POSTINST_INTERCEPTS_DIR = "${THISDIR}/intercept-scripts"
 
-# Create persistent ADU data directory in rootfs
-create_adu_data_dir() {
-    install -d ${IMAGE_ROOTFS}/adu
-}
-ROOTFS_POSTPROCESS_COMMAND += "create_adu_data_dir;"
-
 # Include machine-specific image configuration
 # Each board provides an .inc file that adds board-specific packages,
-# sets WKS_FILE, IMAGE_FSTYPES, etc.
+# sets WKS_FILE, IMAGE_FSTYPES, do_image_wic[depends], etc.
 include adu-base-image-${MACHINE}.inc
