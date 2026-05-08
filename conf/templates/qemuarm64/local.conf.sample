@@ -1,0 +1,52 @@
+# Machine configuration for QEMU aarch64 ADU testing
+MACHINE = "qemuarm64"
+
+# Use systemd
+INIT_MANAGER = "systemd"
+DISTRO_FEATURES:append = " systemd"
+VIRTUAL-RUNTIME_init_manager = "systemd"
+VIRTUAL-RUNTIME_initscripts = "systemd-compat-units"
+
+# Use U-Boot as bootloader
+EXTRA_IMAGEDEPENDS += "u-boot"
+UBOOT_MACHINE = "qemu_arm64_defconfig"
+
+# U-Boot environment: file-backed on FAT boot partition
+UBOOT_ENV_SIZE = "0x4000"
+
+# WIC image configuration
+WKS_FILE = "qemu-adu-ab.wks.in"
+IMAGE_FSTYPES = "wic wic.bmap"
+
+# Kernel config - ensure virtio built-in (not module)
+KERNEL_IMAGETYPE = "Image"
+
+# Boot partition contents for WIC bootimg-partition
+IMAGE_BOOT_FILES = "Image boot.scr"
+
+# ADU configuration
+ADU_MANUFACTURER = "QEMU"
+ADU_MODEL = "virt-aarch64"
+
+# SWUpdate
+IMAGE_INSTALL:append = " swupdate"
+
+# Ensure U-Boot tools (fw_printenv/fw_setenv) are included
+IMAGE_INSTALL:append = " libubootenv-bin"
+
+# Include ADU board config
+IMAGE_INSTALL:append = " adu-board-config"
+
+# Serial console for QEMU
+SERIAL_CONSOLES = "115200;ttyAMA0"
+
+# Disk/storage
+IMAGE_ROOTFS_EXTRA_SPACE = "262144"
+
+# Parallel build settings
+BB_NUMBER_THREADS ?= "14"
+PARALLEL_MAKE ?= "-j 14"
+
+# Download/sstate directories
+DL_DIR ?= "${TOPDIR}/downloads"
+SSTATE_DIR ?= "${TOPDIR}/sstate-cache"

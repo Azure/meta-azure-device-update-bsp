@@ -1,0 +1,14 @@
+# i.MX8ULP A/B partition layout
+# Offset 8192 sectors (4MB) to leave space for U-Boot on eMMC
+# Partition layout:
+#   1: boot    (FAT16) - kernel, DTB, boot.scr
+#   2: rootA   (ext4)  - primary rootfs
+#   3: rootB   (ext4)  - secondary rootfs (update target)
+#   4: data    (ext4)  - persistent ADU data (/adu)
+
+part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 100M
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootA --align 4096 --size 1500M
+part --ondisk mmcblk0 --fstype=ext4 --label rootB --align 4096 --size 1500M
+part /adu --ondisk mmcblk0 --fstype=ext4 --label data --align 4096 --size 500M --fsoptions "defaults,noatime"
+
+bootloader --ptable gpt

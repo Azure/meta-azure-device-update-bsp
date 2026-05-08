@@ -1,0 +1,172 @@
+# U-Boot Boot Script for QEMU aarch64 A/B Updates
+# Equivalent to RPi boot.cmd.in but adapted for virtio block device
+#
+# Serial console: use -nographic with QEMU
+# Disk: virtio 0 (vda in Linux)
+# Partitions: 1=boot, 2=rootA, 3=rootB, 4=data
+
+echo "======================================"
+echo "U-Boot A/B Boot Script (QEMU virt)"
+echo "======================================"
+
+# Load addresses (QEMU virt defaults)
+setenv kernel_addr_r 0x40400000
+setenv fdt_addr_r 0x49000000
+
+# Load kernel from boot partition using load command (DM-aware)
+echo "[INIT] Loading kernel from virtio 0:1..."
+load virtio 0:1 ${kernel_addr_r} Image
+if test $? -ne 0; then
+    echo "[FATAL] Failed to load kernel Image"
+    reset
+fi
+
+# ============================================================
+# Environment Management
+# ============================================================
+echo "[CHECK] Checking for existing U-Boot environment..."
+
+if test -z "${boot_partition}"; then
+    echo "[FIRST-BOOT] Initializing defaults"
+    setenv boot_partition rootA
+    setenv boot_attempts 0
+    setenv boot_result unknown
+    setenv upgrade_available 0
+    setenv max_boot_attempts 5
+    setenv last_known_good_partition rootA
+    setenv rescue_required 0
+    setenv rollback_occurred 0
+    setenv rollback_failed_partition ""
+    setenv boot_attempts_A 0
+    setenv boot_attempts_B 0
+    setenv boot_result_A unknown
+    setenv boot_result_B unknown
+    setenv manual_boot_override 0
+    setenv update_in_progress_id ""
+    saveenv
+    echo "[FIRST-BOOT] Environment initialized"
+fi
+
+# Default any missing variables
+if test -z "${boot_attempts}"; then setenv boot_attempts 0; fi
+if test -z "${upgrade_available}"; then setenv upgrade_available 0; fi
+if test -z "${max_boot_attempts}"; then setenv max_boot_attempts 5; fi
+if test -z "${rescue_required}"; then setenv rescue_required 0; fi
+if test -z "${rollback_occurred}"; then setenv rollback_occurred 0; fi
+
+# ============================================================
+# State Display
+# ============================================================
+echo "[STATE] Current boot variables:"
+echo "  boot_partition=${boot_partition}"
+echo "  boot_attempts=${boot_attempts}"
+echo "  boot_result=${boot_result}"
+echo "  upgrade_available=${upgrade_available}"
+echo "  last_known_good_partition=${last_known_good_partition}"
+echo "  max_boot_attempts=${max_boot_attempts}"
+
+# ============================================================
+# Rescue Check (persistent latch)
+# ============================================================
+if test "${rescue_required}" = "1"; then
+    echo "[RESCUE] *** RESCUE MODE REQUIRED ***"
+    echo "[RESCUE] Both partitions have failed catastrophically."
+    echo "[RESCUE] Manual intervention needed."
+    echo "[RESCUE] To recover: setenv rescue_required 0; saveenv; reset"
+    # Drop to U-Boot console — do not boot
+    exit
+fi
+
+# ============================================================
+# Catastrophic Check (non-upgrade but boot_attempts exhausted)
+# ============================================================
+if test "${upgrade_available}" = "0"; then
+    if test ${boot_attempts} -ge ${max_boot_attempts}; then
+        echo "[CATASTROPHIC] LKG partition failing (attempts=${boot_attempts}/${max_boot_attempts})"
+        echo "[CATASTROPHIC] Setting rescue_required latch"
+        setenv rescue_required 1
+        setenv boot_result catastrophic_failure
+        saveenv
+        exit
+    fi
+fi
+
+# ============================================================
+# Rollback Check (upgrade mode only)
+# ============================================================
+if test "${upgrade_available}" = "1"; then
+    if test ${boot_attempts} -ge ${max_boot_attempts}; then
+        echo "[ROLLBACK] Boot attempts exhausted (${boot_attempts}/${max_boot_attempts})"
+        echo "[ROLLBACK] Rolling back to ${last_known_good_partition}"
+        
+        # Record per-partition failure
+        if test "${boot_partition}" = "rootA"; then
+            setenv boot_result_A failed
+        else
+            setenv boot_result_B failed
+        fi
+        
+        setenv rollback_failed_partition ${boot_partition}
+        setenv boot_partition ${last_known_good_partition}
+        setenv boot_attempts 0
+        setenv boot_result rollback
+        setenv rollback_occurred 1
+        setenv upgrade_available 0
+        saveenv
+        echo "[ROLLBACK] Rollback complete, booting ${boot_partition}"
+    fi
+fi
+
+# ============================================================
+# Partition Validation
+# ============================================================
+echo "[PARTITION] Validating boot_partition=${boot_partition}"
+if test "${boot_partition}" != "rootA"; then
+    if test "${boot_partition}" != "rootB"; then
+        echo "[PARTITION] Invalid boot_partition '${boot_partition}', falling back to LKG"
+        if test -n "${last_known_good_partition}"; then
+            setenv boot_partition ${last_known_good_partition}
+        else
+            setenv boot_partition rootA
+        fi
+        saveenv
+    fi
+fi
+
+# ============================================================
+# Set Boot Arguments
+# ============================================================
+if test "${boot_partition}" = "rootA"; then
+    setenv bootargs "console=ttyAMA0 root=/dev/vda2 rootfstype=ext4 rootwait rw"
+else
+    setenv bootargs "console=ttyAMA0 root=/dev/vda3 rootfstype=ext4 rootwait rw"
+fi
+
+# ============================================================
+# Increment Boot Attempts and Save
+# ============================================================
+setexpr boot_attempts ${boot_attempts} + 1
+if test "${boot_partition}" = "rootA"; then
+    setenv boot_attempts_A ${boot_attempts}
+else
+    setenv boot_attempts_B ${boot_attempts}
+fi
+
+# Set boot_result (unless rollback just occurred)
+if test "${rollback_occurred}" != "1"; then
+    setenv boot_result unknown
+fi
+
+saveenv
+
+# ============================================================
+# Boot
+# ============================================================
+echo "[BOOT] Booting ${boot_partition} (attempt ${boot_attempts}/${max_boot_attempts})"
+echo "[BOOT] bootargs: ${bootargs}"
+
+# Use device tree from QEMU (fdtcontroladdr)
+booti ${kernel_addr_r} - ${fdtcontroladdr}
+
+echo "[FATAL] Boot failed!"
+reset

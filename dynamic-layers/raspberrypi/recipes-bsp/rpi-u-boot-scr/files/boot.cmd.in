@@ -1,0 +1,326 @@
+# U-Boot A/B Partition Boot Script
+# Implements A/B partition management with automatic rollback
+# Compatible with any userspace update system that manages A/B rootfs updates
+# 
+# Note: U-Boot scripting is limited - complex logic (blacklist management, workflow tracking)
+# should be handled in userspace by the update orchestration system
+#
+# Logging: All echo output goes to serial console. Capture with:
+#   - Serial console logging hardware
+#   - journalctl -k (kernel ring buffer)
+#   - dmesg | grep -i "u-boot\|boot:"
+
+echo "======================================"
+echo "U-Boot A/B Boot Script Starting"
+echo "======================================"
+
+# Load device tree and kernel
+echo "[INIT] Loading kernel and device tree..."
+fdt addr ${fdt_addr} && fdt get value bootargs /chosen bootargs
+fatload mmc 0:1 ${kernel_addr_r} @@KERNEL_IMAGETYPE@@
+echo "[INIT] Kernel loaded at ${kernel_addr_r}"
+
+# Note: bootargs from device tree should already have CMDLINE modifications applied
+# (quiet and splash removed, plymouth.enable=0 added via IMAGE_BOOT_FILES)
+# We strip the root= parameter here since we'll add the correct A/B partition below
+# Kernel uses the LAST occurrence of a parameter, so appending is safe
+
+# Initialize U-Boot environment on first boot
+echo "[CHECK] Checking for existing U-Boot environment..."
+if test ! -e @@BOOT_MEDIA@@ 0:1 uboot.env; then 
+    echo "[FIRST-BOOT] No uboot.env found - initializing defaults"
+    echo "[FIRST-BOOT] Setting boot_partition=rootA, boot_attempts=0"
+    setenv boot_partition rootA
+    setenv boot_attempts 0
+    setenv boot_result unknown
+    setenv boot_attempts_A 0
+    setenv boot_attempts_B 0
+    setenv boot_result_A unknown
+    setenv boot_result_B unknown
+    setenv boot_timestamp_A ""
+    setenv boot_timestamp_B ""
+    setenv upgrade_available 0
+    setenv last_known_good_partition rootA
+    setenv max_boot_attempts 5
+    setenv manual_boot_override 0
+    setenv rescue_required 0
+    setenv rollback_occurred 0
+    setenv rollback_failed_partition ""
+    saveenv
+    echo "[FIRST-BOOT] Environment initialized and saved"
+fi
+
+# Ensure all required variables have valid defaults (handles partial/corrupt environments)
+if test -z "${boot_partition}"; then
+    echo "[DEFAULT] boot_partition not set, defaulting to rootA"
+    setenv boot_partition rootA
+fi
+if test -z "${boot_attempts}"; then
+    echo "[DEFAULT] boot_attempts not set, defaulting to 0"
+    setenv boot_attempts 0
+fi
+if test -z "${upgrade_available}"; then
+    echo "[DEFAULT] upgrade_available not set, defaulting to 0"
+    setenv upgrade_available 0
+fi
+if test -z "${max_boot_attempts}"; then
+    echo "[DEFAULT] max_boot_attempts not set, defaulting to 5"
+    setenv max_boot_attempts 5
+fi
+if test -z "${rescue_required}"; then
+    echo "[DEFAULT] rescue_required not set, defaulting to 0"
+    setenv rescue_required 0
+fi
+if test -z "${rollback_occurred}"; then
+    echo "[DEFAULT] rollback_occurred not set, defaulting to 0"
+    setenv rollback_occurred 0
+fi
+if test -z "${boot_attempts_A}"; then
+    setenv boot_attempts_A 0
+fi
+if test -z "${boot_attempts_B}"; then
+    setenv boot_attempts_B 0
+fi
+
+echo "[STATE] Current boot variables:"
+echo "  boot_partition=${boot_partition}"
+echo "  boot_attempts=${boot_attempts}"
+echo "  boot_result=${boot_result}"
+echo "  upgrade_available=${upgrade_available}"
+echo "  last_known_good_partition=${last_known_good_partition}"
+echo "  max_boot_attempts=${max_boot_attempts}"
+echo "  manual_boot_override=${manual_boot_override}"
+
+# Set default max_boot_attempts if not configured
+if test -z "${max_boot_attempts}"; then
+    echo "[CONFIG] max_boot_attempts not set, defaulting to 5"
+    setenv max_boot_attempts 5
+    saveenv
+else
+    echo "[CONFIG] max_boot_attempts=${max_boot_attempts}"
+fi
+
+# Determine which partition to boot from
+echo "[PARTITION] Determining boot partition..."
+# Default to rootA (partition 2) if boot_partition not set
+if test -n "${boot_partition}"; then
+    # boot_partition is set - use it
+    echo "[PARTITION] Using configured boot_partition=${boot_partition}"
+else
+    # Not set - initialize to default
+    echo "[PARTITION] boot_partition not set, defaulting to rootA"
+    setenv boot_partition rootA
+    saveenv
+    echo "[PARTITION] Saved boot_partition=rootA"
+fi
+
+# ========================================================================
+# Rescue Latch Check: If rescue_required is set, drop to console immediately
+# ========================================================================
+# This latch is set when the system has exhausted all recovery options.
+# It persists across power cycles until an operator clears it manually.
+echo "[RESCUE-CHECK] Checking for rescue latch..."
+if test "${rescue_required}" = "1"; then
+    echo ""
+    echo "=========================================="
+    echo "RESCUE MODE: System requires manual recovery"
+    echo "=========================================="
+    echo "Boot partition: ${boot_partition}"
+    echo "Boot attempts: ${boot_attempts}/${max_boot_attempts}"
+    echo "Last known good: ${last_known_good_partition}"
+    echo ""
+    echo "To clear rescue mode and attempt boot:"
+    echo "  setenv rescue_required 0"
+    echo "  setenv boot_attempts 0"
+    echo "  saveenv"
+    echo "  reset"
+    echo ""
+    echo "Type 'help' for available commands."
+    echo "=========================================="
+    exit
+fi
+
+# ========================================================================
+# Catastrophic Failure Check: LKG partition repeatedly failing validation
+# ========================================================================
+# If we've booted into LKG and it's still failing after max attempts,
+# something is fundamentally broken. Set rescue latch and drop to console.
+# The latch persists across power cycles - operator must clear it.
+echo "[CATASTROPHIC-CHECK] Checking for LKG partition failure..."
+echo "[CATASTROPHIC-CHECK] upgrade_available=${upgrade_available}"
+if test "${upgrade_available}" != "1"; then
+    echo "[CATASTROPHIC-CHECK] Not in upgrade mode (stable partition expected)"
+    echo "[CATASTROPHIC-CHECK] Comparing boot_attempts (${boot_attempts}) vs max (${max_boot_attempts})"
+    if test "${boot_attempts}" -ge "${max_boot_attempts}"; then
+        echo "[CATASTROPHIC-FAILURE] LKG partition exceeded max boot attempts!"
+        echo ""
+        echo "=========================================="
+        echo "CRITICAL: LKG partition failed validation"
+        echo "=========================================="
+        echo "Boot partition: ${boot_partition}"
+        echo "Boot attempts: ${boot_attempts}/${max_boot_attempts}"
+        echo "Last known good: ${last_known_good_partition}"
+        echo ""
+        echo "The system cannot boot successfully."
+        echo "Possible causes:"
+        echo "  - Corrupted rootfs on all partitions"
+        echo "  - Hardware failure (storage/memory)"
+        echo "  - Boot validation checks too strict"
+        echo ""
+        echo "Setting rescue latch - system will require manual recovery."
+        echo ""
+        # Set persistent rescue latch (survives power cycles)
+        echo "[CATASTROPHIC-FAILURE] Setting rescue_required=1 (persistent latch)"
+        setenv rescue_required 1
+        saveenv
+        echo "[CATASTROPHIC-FAILURE] Dropping to U-Boot console - type 'help' for commands"
+        exit
+    else
+        echo "[CATASTROPHIC-CHECK] Boot attempts within limit - continuing normal boot"
+    fi
+else
+    echo "[CATASTROPHIC-CHECK] Upgrade mode active - skipping LKG check"
+fi
+
+# Check if upgrade is pending (upgrade_available=1)
+echo "[UPGRADE-CHECK] upgrade_available=${upgrade_available}"
+if test "${upgrade_available}" = "1"; then
+    echo "[VALIDATION-MODE] *** ENTERING VALIDATION MODE ***"
+    echo "[VALIDATION-MODE] Validating partition: ${boot_partition}"
+    echo "[VALIDATION-MODE] Current boot_attempts: ${boot_attempts}"
+    echo "[VALIDATION-MODE] Max allowed attempts: ${max_boot_attempts}"
+    
+    # CRITICAL: Check for rollback condition BEFORE incrementing boot_attempts
+    # This prevents rolling back immediately after ApplyUpdate sets boot_partition
+    echo "[ROLLBACK-CHECK] Checking if rollback needed (attempts >= max)..."
+    if test "${boot_attempts}" -ge "${max_boot_attempts}"; then
+        echo "[ROLLBACK-TRIGGER] *** AUTOMATIC ROLLBACK TRIGGERED ***"
+        echo "[ROLLBACK-TRIGGER] Reason: boot_attempts (${boot_attempts}) >= max (${max_boot_attempts})"
+        echo "[ROLLBACK-TRIGGER] Failed partition: ${boot_partition}"
+        
+        # Mark current partition as failed
+        echo "[ROLLBACK-STATE] Marking current partition as failed"
+        if test "${boot_partition}" = "rootA"; then
+            echo "[ROLLBACK-STATE] Setting boot_result_A=failed"
+            setenv boot_result_A failed
+            setenv rollback_failed_partition rootA
+        else
+            echo "[ROLLBACK-STATE] Setting boot_result_B=failed"
+            setenv boot_result_B failed
+            setenv rollback_failed_partition rootB
+        fi
+        
+        # Rollback to last known good partition
+        # Note: Blacklist management is handled by userspace validation service
+        echo "[ROLLBACK-TARGET] Determining rollback target..."
+        if test -n "${last_known_good_partition}"; then
+            echo "[ROLLBACK-TARGET] Using last_known_good_partition=${last_known_good_partition}"
+            setenv boot_partition ${last_known_good_partition}
+        else
+            # Fallback: toggle partition
+            echo "[ROLLBACK-TARGET] last_known_good_partition not set, using toggle fallback"
+            if test "${boot_partition}" = "rootA"; then
+                echo "[ROLLBACK-FALLBACK] Toggling from rootA to rootB"
+                setenv boot_partition rootB
+            else
+                echo "[ROLLBACK-FALLBACK] Toggling from rootB to rootA"
+                setenv boot_partition rootA
+            fi
+        fi
+        
+        # Reset counters for rollback
+        echo "[ROLLBACK-RESET] Resetting boot counters"
+        setenv boot_attempts 0
+        
+        # Mark that rollback occurred - preserved for userspace detection
+        # boot_result stays as 'failed' from the rollback trigger
+        setenv boot_result rollback
+        setenv rollback_occurred 1
+        
+        # Clear upgrade flag - rollback complete
+        echo "[ROLLBACK-COMPLETE] Clearing upgrade_available flag"
+        setenv upgrade_available 0
+        saveenv
+        echo "[ROLLBACK-COMPLETE] Rollback complete - will boot from ${boot_partition}"
+    else
+        echo "[ROLLBACK-CHECK] No rollback needed (attempts within limit)"
+    fi
+else
+    echo "[UPGRADE-CHECK] Not in validation mode - normal boot"
+fi
+
+# Set root partition based on boot_partition variable
+# Validate boot_partition explicitly — reject unknown values
+echo "[BOOT-PREP] Preparing to boot from ${boot_partition}..."
+if test "${boot_partition}" = "rootA"; then
+    setenv bootargs "${bootargs} root=/dev/mmcblk0p2"
+    echo "[BOOT-PREP] Set bootargs for rootA (mmcblk0p2)"
+elif test "${boot_partition}" = "rootB"; then
+    setenv bootargs "${bootargs} root=/dev/mmcblk0p3"
+    echo "[BOOT-PREP] Set bootargs for rootB (mmcblk0p3)"
+else
+    echo "[BOOT-ERROR] Invalid boot_partition value: ${boot_partition}"
+    echo "[BOOT-ERROR] Expected 'rootA' or 'rootB'"
+    # Fall back to last_known_good_partition if available
+    if test -n "${last_known_good_partition}"; then
+        echo "[BOOT-ERROR] Falling back to last_known_good_partition=${last_known_good_partition}"
+        setenv boot_partition ${last_known_good_partition}
+        if test "${boot_partition}" = "rootA"; then
+            setenv bootargs "${bootargs} root=/dev/mmcblk0p2"
+        else
+            setenv bootargs "${bootargs} root=/dev/mmcblk0p3"
+        fi
+    else
+        echo "[BOOT-ERROR] No fallback available, defaulting to rootA"
+        setenv boot_partition rootA
+        setenv bootargs "${bootargs} root=/dev/mmcblk0p2"
+    fi
+    saveenv
+fi
+
+# Increment boot attempts counter
+echo "[BOOT-COUNTER] Incrementing boot_attempts from ${boot_attempts}"
+setexpr boot_attempts ${boot_attempts} + 1
+echo "[BOOT-COUNTER] Boot attempt #${boot_attempts} for ${boot_partition}"
+setexpr remaining ${max_boot_attempts} - ${boot_attempts}
+echo "[BOOT-COUNTER] Attempts remaining before rollback: ${remaining}"
+
+# Set boot_result to unknown ONLY if no rollback occurred
+# After rollback, boot_result is already set to 'rollback' — preserve it
+if test "${rollback_occurred}" = "1"; then
+    echo "[BOOT-STATE] Rollback occurred - preserving boot_result=${boot_result}"
+    # Clear the rollback_occurred flag for next boot
+    setenv rollback_occurred 0
+else
+    echo "[BOOT-STATE] Setting boot_result=unknown (userspace will validate)"
+    setenv boot_result unknown
+fi
+
+# Update partition-specific boot attempts
+if test "${boot_partition}" = "rootA"; then
+    setexpr boot_attempts_A ${boot_attempts_A} + 1
+    echo "[BOOT-STATS] boot_attempts_A now ${boot_attempts_A}"
+else
+    setexpr boot_attempts_B ${boot_attempts_B} + 1
+    echo "[BOOT-STATS] boot_attempts_B now ${boot_attempts_B}"
+fi
+
+# Save environment before booting
+echo "[BOOT-SAVE] Saving U-Boot environment..."
+saveenv
+echo "[BOOT-SAVE] Environment saved"
+
+echo "======================================"
+echo "[FINAL-STATE] Final boot state:"
+echo "  boot_partition: ${boot_partition}"
+echo "  boot_attempts: ${boot_attempts}/${max_boot_attempts}"
+echo "  boot_result: ${boot_result}"
+echo "  upgrade_available: ${upgrade_available}"
+echo "  last_known_good: ${last_known_good_partition}"
+echo "  bootargs: ${bootargs}"
+echo "======================================"
+echo "[KERNEL-BOOT] Launching kernel from ${kernel_addr_r}..."
+echo "======================================"
+
+# Boot the kernel
+@@KERNEL_BOOTCMD@@ ${kernel_addr_r} - ${fdt_addr}
