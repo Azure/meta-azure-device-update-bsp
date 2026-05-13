@@ -14,6 +14,7 @@ IMAGE_INSTALL += " \
     zstd \
     libubootenv-bin \
     adu-board-config \
+    azure-device-update \
 "
 
 # Shared image settings

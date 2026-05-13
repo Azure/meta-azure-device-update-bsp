@@ -28,7 +28,7 @@ IMAGE_INSTALL += " \
     qemu-u-boot-scr \
 "
 
-ROOTFS_POSTPROCESS_COMMAND += "create_adu_dirs;"
+ROOTFS_POSTPROCESS_COMMAND += "create_adu_dirs; write_adu_base_version;"
 
 create_adu_dirs() {
     install -d -m 0770 ${IMAGE_ROOTFS}/var/lib/adu/downloads
@@ -37,6 +37,15 @@ create_adu_dirs() {
     install -d -m 0770 ${IMAGE_ROOTFS}/var/lib/adu/sdc
     install -d -m 0770 ${IMAGE_ROOTFS}/var/lib/adu/api
     install -d -m 0755 ${IMAGE_ROOTFS}/adu
+}
+
+# Baseline /etc/adu-version for the freshly-flashed rootfs. The versioned
+# update images (adu-update-image-v{1,2,3}) overwrite this file during the
+# debugfs ext4 surgery in adu-update-image-common.inc, so this value is what
+# the device reports BEFORE any update has been applied.
+write_adu_base_version() {
+    echo "${ADU_SOFTWARE_VERSION}" > ${IMAGE_ROOTFS}/etc/adu-version
+    chmod 0644 ${IMAGE_ROOTFS}/etc/adu-version
 }
 
 PROVIDES += "virtual/adu-base-image"
