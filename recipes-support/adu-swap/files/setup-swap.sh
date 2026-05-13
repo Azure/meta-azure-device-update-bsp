@@ -1,15 +1,31 @@
 #!/bin/bash
 # Setup ADU Swap File for Delta Update Operations
 # Delta reconstruction (bspatch/applydiff) requires ~1GB RAM
-# This script creates a 2GB swap file in /adu partition
+# Swap size is board-dependent and is read from /etc/adu/board.conf
+# (ADU_SWAP_SIZE_MB). Default 2048 MB (RPi4 historical behavior).
+# Set ADU_SWAP_SIZE_MB=0 in board.conf to skip swap setup entirely
+# (e.g., small QEMU disk).
 
 set -e
 
-SWAP_FILE="/adu/swapfile"
-SWAP_SIZE_MB="2048"  # 2GB
+# Source board-specific configuration (provides ADU_SWAP_SIZE_MB).
+BOARD_CONF="/etc/adu/board.conf"
+if [[ -r "$BOARD_CONF" ]]; then
+    # shellcheck source=/dev/null
+    . "$BOARD_CONF"
+fi
+
+SWAP_FILE="${ADU_SWAP_FILE:-/adu/swapfile}"
+SWAP_SIZE_MB="${ADU_SWAP_SIZE_MB:-2048}"
 LOG_FILE="/adu/health/swap-setup.log"
 ADU_UID=800
 ADU_GID=800
+
+# Honor opt-out: size=0 means "this board has no spare /adu space, skip".
+if [[ "$SWAP_SIZE_MB" -eq 0 ]]; then
+    echo "ADU_SWAP_SIZE_MB=0 in $BOARD_CONF — skipping swap setup."
+    exit 0
+fi
 
 # Ensure health directory exists with proper permissions
 # Only accessible by adu user/group (800:800) and root

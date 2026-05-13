@@ -26,6 +26,19 @@ IMAGE_INSTALL += " \
     python3 \
     nano \
     qemu-u-boot-scr \
+    u-boot-fw-utils \
+    adu-board-config \
+    adu-config-setup \
+    adu-agent-service \
+    adu-device-info-files \
+    adu-boot-validation \
+    adu-swap \
+    adu-persistent-overlay \
+    adu-tools \
+    adu-diskutil \
+    adu-diag \
+    yocto-a-b-update \
+    adu-swupdate-hw-compat \
 "
 
 ROOTFS_POSTPROCESS_COMMAND += "create_adu_dirs; write_adu_base_version;"

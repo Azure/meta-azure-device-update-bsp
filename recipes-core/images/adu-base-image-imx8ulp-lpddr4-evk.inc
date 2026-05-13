@@ -25,6 +25,19 @@ IMAGE_INSTALL += " \
     kernel-image \
     kernel-devicetree \
     imx8ulp-u-boot-scr \
+    u-boot-fw-utils \
+    adu-board-config \
+    adu-config-setup \
+    adu-agent-service \
+    adu-device-info-files \
+    adu-boot-validation \
+    adu-swap \
+    adu-persistent-overlay \
+    adu-tools \
+    adu-diskutil \
+    adu-diag \
+    yocto-a-b-update \
+    adu-swupdate-hw-compat \
     ${@bb.utils.contains('WITH_FEATURE_DELTA_UPDATE', '1', 'bsdiff', '', d)} \
 "
 
