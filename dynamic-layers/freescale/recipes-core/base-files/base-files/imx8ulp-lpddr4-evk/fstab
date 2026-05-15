@@ -1,0 +1,19 @@
+# /etc/fstab for NXP i.MX8ULP EVK ADU image.
+# Mirrors the wks layout in meta-azure-device-update-bsp/wic/imx8ulp-adu-ab.wks.in:
+#   /dev/mmcblk0p1  boot   (vfat)
+#   /dev/mmcblk0p2  rootA  (ext4)
+#   /dev/mmcblk0p3  rootB  (ext4)
+#   /dev/mmcblk0p4  /adu   (ext4)   <-- persistent data partition
+
+/dev/root            /                    auto       defaults              1  1
+proc                 /proc                proc       defaults              0  0
+devpts               /dev/pts             devpts     mode=0620,ptmxmode=0666,gid=5      0  0
+tmpfs                /run                 tmpfs      mode=0755,nodev,nosuid,strictatime 0  0
+tmpfs                /var/volatile        tmpfs      defaults              0  0
+
+# Boot partition (FAT) — keeps kernel + DTB + boot.scr.
+/dev/mmcblk0p1       /boot                vfat       defaults,sync                       0  0
+
+# Persistent ADU data partition. Required for password / config persistence
+# across A/B updates via adu-persistent-overlay.
+/dev/mmcblk0p4       /adu                 ext4       defaults,noatime,nofail             0  2

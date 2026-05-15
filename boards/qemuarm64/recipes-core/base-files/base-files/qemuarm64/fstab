@@ -1,0 +1,18 @@
+# /etc/fstab for QEMU arm64 ADU image.
+# Mirrors the wks layout in meta-azure-device-update-bsp/wic/qemu-adu-ab.wks.in:
+#   /dev/vda1  boot   (vfat)
+#   /dev/vda2  rootA  (ext4)
+#   /dev/vda3  rootB  (ext4)
+#   /dev/vda4  /adu   (ext4)   <-- persistent data partition
+
+/dev/root            /                    auto       defaults              1  1
+proc                 /proc                proc       defaults              0  0
+devpts               /dev/pts             devpts     mode=0620,ptmxmode=0666,gid=5      0  0
+tmpfs                /run                 tmpfs      mode=0755,nodev,nosuid,strictatime 0  0
+tmpfs                /var/volatile        tmpfs      defaults              0  0
+
+# Persistent ADU data partition. Required for password / config persistence
+# across A/B updates via adu-persistent-overlay. The "nofail" option keeps the
+# system bootable even if the partition is missing (e.g. raw rootfs ext4 boot
+# during initial bring-up before wic is flashed).
+/dev/vda4            /adu                 ext4       defaults,noatime,nofail            0  2
