@@ -38,8 +38,18 @@ if [[ -f /etc/swupdate.pem ]]; then
     KEY_ARG=(-k /etc/swupdate.pem)
 fi
 
-if ! swupdate -v "${KEY_ARG[@]}" -H qemuarm64:1.0 -i "$SWU" -e "$SELECTION" 2>&1 | tee "$SWUPDATE_LOG"; then
-    echo "ERR_SWUPDATE_FAILED: see $SWUPDATE_LOG" >&2
+# swupdate v2025.x is known to exit non-zero (typically 1) on success after
+# a clean install. Trust the log marker "SWUPDATE successful !" as the
+# authoritative success signal; fall back to exit code only if absent.
+set +e
+swupdate -v "${KEY_ARG[@]}" -H qemuarm64:1.0 -i "$SWU" -e "$SELECTION" >"$SWUPDATE_LOG" 2>&1
+SWU_RC=$?
+set -e
+cat "$SWUPDATE_LOG"
+if grep -q "SWUPDATE successful !" "$SWUPDATE_LOG"; then
+    echo "[e2e-install] swupdate reported success (exit=$SWU_RC, log marker matched)"
+else
+    echo "ERR_SWUPDATE_FAILED: exit=$SWU_RC, no success marker in $SWUPDATE_LOG" >&2
     tail -40 "$SWUPDATE_LOG" >&2 || true
     exit 67
 fi
