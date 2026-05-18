@@ -1,0 +1,19 @@
+[Unit]
+Description=ADU Persistent /etc Watcher
+DefaultDependencies=no
+After=adu-persistent-overlay.service local-fs.target
+Requires=adu-persistent-overlay.service
+ConditionPathIsMountPoint=/adu
+RequiresMountsFor=/adu
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/adu/adu-persistent-watcher.sh
+Restart=on-failure
+RestartSec=5
+# Keep the watcher running even on transient inotify hiccups.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,19 +1,22 @@
 [Unit]
-Description=ADU Persistent Overlay and Bind Mounts (Overlayfs Strategy)
-DefaultDependencies=no
-After=local-fs.target adu.mount adu-filesystem-layout.service
+Description=ADU Persistent Overlay (Restore + Bind + Overlay)
+Documentation=https://github.com/Azure/iot-hub-device-update
+After=adu.mount adu-filesystem-layout.service
 Requires=adu-filesystem-layout.service
-Before=systemd-user-sessions.service network-pre.target deviceupdate-agent.service
+Before=sshd.service systemd-user-sessions.service deviceupdate-agent.service
 ConditionPathIsMountPoint=/adu
 RequiresMountsFor=/adu
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStartSec=60s
 ExecStartPre=/usr/lib/adu/setup-overlay-dirs.sh
-ExecStart=/usr/lib/adu/mount-overlays.sh
+ExecStart=/usr/lib/adu/restore-persistent-files.sh
+ExecStart=-/usr/lib/adu/mount-overlays.sh
 ExecStart=/usr/lib/adu/mount-critical-binds.sh
-ExecStop=/usr/lib/adu/umount-overlays.sh
+ExecStop=-/usr/lib/adu/sync-persistent-files.sh
+ExecStop=-/usr/lib/adu/umount-overlays.sh
 
 [Install]
-WantedBy=sysinit.target
+WantedBy=multi-user.target
