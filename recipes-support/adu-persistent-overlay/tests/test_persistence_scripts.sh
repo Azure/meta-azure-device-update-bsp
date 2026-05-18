@@ -375,6 +375,84 @@ test_restore_atomic_via_temp_in_dst_dir() {
 }
 
 # -----------------------------------------------------------------------------
+# /adu/conf/certs/ pre-creation by setup-overlay-dirs.sh
+# Matches upstream Azure/iot-hub-device-update path /etc/adu/certs/, which
+# resolves to /adu/conf/certs/ via the /etc/adu -> /adu/conf symlink.
+# -----------------------------------------------------------------------------
+
+_extract_certs_block() {
+    local script="${FILES_DIR}/setup-overlay-dirs.sh"
+    awk '
+        /Pre-create \/adu\/conf\/certs/ { capture=1 }
+        capture { print }
+        capture && /^fi$/ { capture=0; exit }
+    ' "$script"
+}
+
+_run_certs_block_with_persist_base() {
+    local persist_base="$1"
+    local snippet; snippet="$(_extract_certs_block)"
+    [ -n "$snippet" ] || { echo "could not extract certs block"; return 1; }
+    bash -c "set -e; PERSIST_BASE='${persist_base}'; ${snippet}"
+}
+
+test_setup_creates_adu_conf_certs() {
+    local d; d=$(mktemp -d); trap "rm -rf $d" RETURN
+    mkdir -p "${d}/conf"
+    _run_certs_block_with_persist_base "$d" >/dev/null || return 1
+    [ -d "${d}/conf/certs" ] || { echo "/adu/conf/certs not created"; return 1; }
+}
+
+test_setup_certs_has_mode_0750() {
+    local d; d=$(mktemp -d); trap "rm -rf $d" RETURN
+    mkdir -p "${d}/conf"
+    _run_certs_block_with_persist_base "$d" >/dev/null || return 1
+    local mode; mode=$(stat -c '%a' "${d}/conf/certs")
+    assert_eq "750" "$mode" "/adu/conf/certs mode" || return 1
+}
+
+test_setup_skips_certs_when_conf_missing() {
+    local d; d=$(mktemp -d); trap "rm -rf $d" RETURN
+    _run_certs_block_with_persist_base "$d" >/dev/null || return 1
+    [ ! -d "${d}/conf/certs" ] || { echo "/adu/conf/certs created without /adu/conf"; return 1; }
+}
+
+test_setup_certs_idempotent_preserves_files() {
+    local d; d=$(mktemp -d); trap "rm -rf $d" RETURN
+    mkdir -p "${d}/conf/certs"
+    echo "DEVICE-CERT-PEM"    > "${d}/conf/certs/client.pem"
+    echo "DEVICE-PRIVATE-KEY" > "${d}/conf/certs/client.key"
+    chmod 644 "${d}/conf/certs/client.pem"
+    chmod 600 "${d}/conf/certs/client.key"
+    _run_certs_block_with_persist_base "$d" >/dev/null || return 1
+    assert_contains "${d}/conf/certs/client.pem" "DEVICE-CERT-PEM"    "cert preserved" || return 1
+    assert_contains "${d}/conf/certs/client.key" "DEVICE-PRIVATE-KEY" "key preserved"  || return 1
+    local kmode; kmode=$(stat -c '%a' "${d}/conf/certs/client.key")
+    assert_eq "600" "$kmode" "client.key file mode preserved" || return 1
+}
+
+test_setup_certs_block_uses_adu_owner() {
+    local script="${FILES_DIR}/setup-overlay-dirs.sh"
+    grep -q 'chown adu:adu "${PERSIST_BASE}/conf/certs"' "$script" \
+        || { echo "missing chown adu:adu"; return 1; }
+    grep -q 'chmod 0750 "${PERSIST_BASE}/conf/certs"' "$script" \
+        || { echo "missing chmod 0750"; return 1; }
+}
+
+test_setup_certs_block_guarded_by_conf_check() {
+    local script="${FILES_DIR}/setup-overlay-dirs.sh"
+    grep -A8 "Pre-create /adu/conf/certs" "$script" \
+        | grep -q 'if \[ -d "${PERSIST_BASE}/conf" \]' \
+        || { echo "certs creation not guarded by /adu/conf existence check"; return 1; }
+}
+
+test_setup_certs_chown_tolerates_missing_adu_user() {
+    local script="${FILES_DIR}/setup-overlay-dirs.sh"
+    grep -q 'chown adu:adu "${PERSIST_BASE}/conf/certs" 2>/dev/null || true' "$script" \
+        || { echo "chown does not tolerate missing adu user"; return 1; }
+}
+
+# -----------------------------------------------------------------------------
 # Driver
 # -----------------------------------------------------------------------------
 
@@ -397,6 +475,13 @@ run_test "sync:    all-files mode iterates SYNC_FILES"                    test_s
 run_test "sync:    ssh_host_* routed to /adu/system/ssh/<name>"           test_sync_ssh_host_key_routing
 run_test "sync:    write is atomic via temp+rename in dst dir"            test_sync_atomic_via_temp_in_dst_dir
 run_test "restore: write is atomic via temp+rename in dst dir"            test_restore_atomic_via_temp_in_dst_dir
+run_test "setup:   /adu/conf/certs created (mode 0750)"                  test_setup_creates_adu_conf_certs
+run_test "setup:   /adu/conf/certs mode is 0750"                         test_setup_certs_has_mode_0750
+run_test "setup:   skips /adu/conf/certs when /adu/conf missing"         test_setup_skips_certs_when_conf_missing
+run_test "setup:   idempotent re-run preserves operator-installed certs" test_setup_certs_idempotent_preserves_files
+run_test "setup:   certs block sets adu:adu ownership and 0750 perms"    test_setup_certs_block_uses_adu_owner
+run_test "setup:   certs creation is guarded by /adu/conf existence"     test_setup_certs_block_guarded_by_conf_check
+run_test "setup:   chown of /adu/conf/certs tolerates missing adu user"  test_setup_certs_chown_tolerates_missing_adu_user
 
 echo "================================================================"
 echo "  passed: ${PASS}    failed: ${FAIL}"

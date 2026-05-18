@@ -1,188 +1,221 @@
-# ADU Persistent Overlay System
+# adu-persistent-overlay
 
-## Overview
+Operator-level reference for the `adu-persistent-overlay` recipe. For the
+*why* and the design rationale, see
+[`docs/persistence-strategy.md`](../../../docs/persistence-strategy.md) at
+the repo root.
 
-The ADU Persistent Overlay system provides a hybrid approach to persist data across A/B rootfs updates:
+> **Reference implementation — provided as-is.**
+> No support, warranty, or guarantees of any kind. Validate against your
+> own product requirements before using on real devices.
 
-- **OverlayFS**: Applied to directories like `/etc` and `/var/log` for automatic persistence of all changes
-- **Bind Mounts**: Used for critical files like `/etc/passwd`, `/etc/shadow` for explicit control and easy inspection
+---
 
-## Architecture
+## What this recipe installs
 
-```
-┌─────────────────────────────────────────┐
-│  User View (merged filesystem)          │
-├─────────────────────────────────────────┤
-│  Critical Files (bind mounts)           │
-│  /etc/passwd → /adu/system/passwd       │
-│  /etc/shadow → /adu/system/shadow       │
-├─────────────────────────────────────────┤
-│  Overlay Layer (/etc overlay)           │
-│  Upper: /adu/overlay/etc                │
-│  Lower: /etc (rootfs - read-only)       │
-└─────────────────────────────────────────┘
-```
+| Path | Purpose |
+|---|---|
+| `/lib/systemd/system/adu-persistent-overlay.service` | Boot-time `oneshot`: restore `/etc` from `/adu/system/`, then overlay/bind mount. Ordered before `sshd.service`, user sessions, and the ADU agent. |
+| `/lib/systemd/system/adu-persistent-watcher.service` | Long-running `simple` unit: `inotify` mirror of `/etc` → `/adu/system/`. |
+| `/usr/lib/adu/setup-overlay-dirs.sh` | Creates `/adu/{overlay,work,system,.backups}` if absent. |
+| `/usr/lib/adu/restore-persistent-files.sh` | Boot-time merge engine (3-way for passwd-family, persist-wins for others, copy for SSH host keys). |
+| `/usr/lib/adu/mount-overlays.sh` | Mount overlayfs upper dirs (best-effort; needs `CONFIG_OVERLAY_FS=y`). |
+| `/usr/lib/adu/mount-critical-binds.sh` | Bind-mount `apt-*` config directories. |
+| `/usr/lib/adu/umount-overlays.sh` | Best-effort unmount during shutdown. |
+| `/usr/lib/adu/adu-persistent-watcher.sh` | `inotifywait` loop, 1 s debounce. |
+| `/usr/lib/adu/sync-persistent-files.sh` | Atomic temp+rename writer to `/adu/system/`. Supports single-file or shutdown all-files mode. |
+| `/usr/lib/adu/factory-reset.sh` | Operator tool: clears persisted state. |
+| `/usr/lib/adu/verify-overlays.sh` | Operator tool: prints active mounts and persist sources. |
+| `/etc/overlay/overlay.conf` | Configuration (file lists, debounce). |
 
-## Storage Layout
+Both services are enabled via `SYSTEMD_SERVICE:${PN}`. The recipe adds
+`inotify-tools` and `coreutils` to `RDEPENDS`.
 
-```
-/adu/
-├── overlay/           # Upper layers for overlayfs
-│   ├── var-log/      # Changes to /var/log
-│   ├── var-lib-connman/   # WiFi/network configs
-│   ├── var-lib-bluetooth/ # Bluetooth pairings
-│   ├── var-lib-apt/       # APT package lists & state
-│   └── var-cache-apt/     # Downloaded .deb packages
-├── work/             # Overlayfs work directories
-│   ├── var-log/
-│   ├── var-lib-connman/
-│   ├── var-lib-bluetooth/
-│   ├── var-lib-apt/
-│   └── var-cache-apt/
-├── system/           # Critical files (bind mounted)
-│   ├── passwd
-│   ├── shadow
-│   ├── group
-│   ├── gshadow
-│   ├── hostname
-│   ├── timezone
-│   ├── machine-id
-│   ├── du-config.json
-│   ├── ssh/          # SSH host keys directory
-│   │   ├── ssh_host_rsa_key
-│   │   ├── ssh_host_ed25519_key
-│   │   └── ...
-│   ├── apt-sources.list.d/     # APT repositories
-│   ├── apt-trusted.gpg.d/      # APT signing keys
-│   └── apt-preferences.d/      # Package pinning
-└── .backups/         # Automatic backups
-    ├── original-*    # Original rootfs files
-    └── migration-*   # Migration snapshots
-```
+---
 
-## Usage
+## What is persisted (out of the box)
 
-### Verify Active Mounts
+- **Line-merged files** (`/etc/{passwd,shadow,group,gshadow}`).
+  Image-side additions of system users *and* operator-set passwords
+  both survive an A/B update.
+- **Whole-file persist** (`/etc/{hostname,timezone,machine-id}`,
+  `/etc/adu/du-config.json`). Persisted copy replaces rootfs copy on boot.
+- **SSH host keys** (`/etc/ssh/ssh_host_*`). Persisted, so SSH clients
+  do not see "host key changed" warnings across updates.
+- **APT config directories** (`/etc/apt/{sources.list.d,trusted.gpg.d,preferences.d}`),
+  bind-mounted from `/adu/system/`.
+- **OverlayFS upper layers** for `/var/log`, `/var/lib/connman`,
+  `/var/lib/bluetooth`, `/var/cache/apt`, `/var/lib/adu` — when the
+  kernel supports `CONFIG_OVERLAY_FS`.
+- **Direct bind mounts** for `/var/lib/adu/{downloads,extensions,states,sdc,api}`
+  on top of `/adu/data/<subdir>`.
+
+What is **not** persisted by this recipe:
+- `/home/<user>/` and `~/.ssh/authorized_keys`.
+- `/etc/ssh/sshd_config`, `/etc/ssh/moduli` (image-owned by design).
+- Anything not listed in `/etc/overlay/overlay.conf`.
+
+---
+
+## Common operator tasks
+
+### Inspect active state
 
 ```bash
 sudo /usr/lib/adu/verify-overlays.sh
+mount | grep -E 'adu|overlay'
+ls -la /adu/system/
 ```
 
-### Add New User (Persists Automatically)
+### Change a password and confirm it persisted
+
+```bash
+sudo passwd root
+# wait ~2 s for the watcher
+sudo diff /etc/shadow /adu/system/shadow   # should be empty
+sudo reboot
+# log back in with the new password
+```
+
+### Add a new persistent user
 
 ```bash
 sudo useradd -m newuser
 sudo passwd newuser
-
-# Verify persistence
-cat /adu/system/passwd | grep newuser
-cat /adu/overlay/etc/home/newuser  # home dir in overlay
+# /etc/{passwd,shadow,group,gshadow} all change → watcher syncs them.
+# Home directory under /home/newuser/ is NOT persisted unless your image
+# places /home on a separate partition.
 ```
 
-### Modify Configuration Files
-
-```bash
-# Edit any file in /etc
-sudo nano /etc/hostname
-
-# Changes automatically saved to /adu/overlay/etc/
-ls -la /adu/overlay/etc/ | grep hostname
-```
-
-### Factory Reset
+### Factory reset
 
 ```bash
 sudo /usr/lib/adu/factory-reset.sh
-# Removes all persistent changes, reverts to pristine rootfs
+sudo reboot
 ```
 
-### Manual Migration (Existing Devices)
+This removes `/adu/system/`, `/adu/overlay/`, `/adu/work/`, and any
+backups. On the next boot, the rootfs `/etc` is taken as the new baseline
+and seeded into `/adu/system/`.
+
+### Delete a user (with caveat)
 
 ```bash
-sudo /usr/lib/adu/migrate-to-overlay.sh
+sudo userdel olduser
+# Also remove the entry from the persisted copies so the next boot
+# doesn't resurrect them from the rootfs.
+sudo sed -i '/^olduser:/d' /adu/system/passwd /adu/system/shadow \
+                            /adu/system/group  /adu/system/gshadow
 ```
 
-## Configuration
+See [`docs/persistence-strategy.md`](../../../docs/persistence-strategy.md) §4.3
+for why this extra step is needed (deletion is not modeled in the merge).
 
-Edit `/etc/adu/overlay.conf` to customize:
+### Override the watched-file set
+
+Edit `/etc/overlay/overlay.conf` (shipped on the rootfs — to persist a
+change to it, ship a new image), then:
 
 ```bash
-# Add more overlay directories
-OVERLAY_DIRS=(
-    "/var/log"
-    "/var/cache"      # Add cache directory persistence
-    "/home"           # Add home directory persistence
-)
-
-# Add more bind-mounted files
-BIND_MOUNTS=(
-    "passwd:/etc/passwd"
-    "shadow:/etc/shadow"
-    "custom.conf:/etc/myapp/custom.conf"  # Add custom config
-)
+sudo systemctl restart adu-persistent-overlay.service adu-persistent-watcher.service
 ```
 
-After modifying configuration:
-```bash
-sudo systemctl restart adu-persistent-overlay
-```
-
-## Benefits
-
-✅ **Automatic Persistence**: 
-- WiFi/Bluetooth connections persist automatically via overlayfs
-- Network configurations survive A/B updates
-- SSH host keys remain constant (no "host key changed" warnings)
-- APT repository configs and package cache persist across updates
-
-✅ **Easy Inspection**: Critical files visible in `/adu/system/` directory  
-✅ **Factory Reset**: Simple `rm -rf /adu/overlay/*` to revert  
-✅ **A/B Update Safe**: Works across rootfs partition switches  
-✅ **Rollback Compatible**: Changes persist even after update rollback  
-✅ **Backup Friendly**: Easy to backup `/adu/` directory  
+---
 
 ## Troubleshooting
 
-### Check Mount Status
+### "Password change failed: unexpected failure: Device or resource busy"
+
+This is the symptom that the **old** (bind-mount-per-file) design had.
+On this version it should not occur. If it does:
+
 ```bash
-mount | grep overlay
-mount | grep bind
+mount | grep /etc/
 ```
 
-### View Overlay Changes
+If anything is bind-mounted directly on a file in `/etc/` (e.g.
+`/etc/shadow`), then either an older version of this recipe is still
+installed or a custom mount unit is overriding our design. Remove the
+stale mounts and reinstall this recipe.
+
+### `/etc/shadow` reverts on every boot
+
+Check the watcher:
+
 ```bash
-# See what changed in /etc
-find /adu/overlay/etc -type f
+sudo systemctl status adu-persistent-watcher.service
+sudo journalctl -u adu-persistent-watcher.service --no-pager -n 50
+sudo journalctl -u adu-persistent-overlay.service --no-pager -n 50
 ```
 
-### Compare Persistent vs Original
+Verify the file is in `SYNC_FILES` in `/etc/overlay/overlay.conf` and
+that `inotify-tools` is installed (`which inotifywait`).
+
+### Boot hangs at "Listening on … socket"
+
+Indicates a unit-ordering cycle. The shipped service file does **not**
+have `Before=sysinit.target`, `Before=basic.target`, or
+`Before=sshd.socket`. If you edited it locally, remove those clauses.
+See `docs/persistence-strategy.md` §4.2 for the rationale.
+
+### Overlay mounts say "Failed to mount overlay"
+
+Your kernel is missing `CONFIG_OVERLAY_FS=y`. Auth persistence still
+works; only `/var/log` / connman / bluetooth / apt cache will not
+survive reboot. Enable overlay in your kernel fragment to fix.
+
+### Inspect the line merge
+
 ```bash
-diff /etc/passwd.rootfs-original /etc/passwd
+sudo journalctl -u adu-persistent-overlay.service --no-pager \
+    | grep -E '\[merge\]|\[seed\]|\[restore\]|\[warn\]'
 ```
 
-### Remount After Changes
+Compare:
+
 ```bash
-sudo systemctl restart adu-persistent-overlay
+sudo diff /etc/shadow                  /adu/system/shadow
+sudo diff /adu/system/shadow           /adu/system/baseline/shadow
 ```
 
-## Migration from Existing System
+---
 
-If upgrading from a system without overlays:
+## Configuration knobs
 
-1. System automatically migrates on first boot
-2. Original files backed up to `/adu/.backups/migration-*`
-3. Check migration status: `cat /adu/.migration-complete`
+All in `/etc/overlay/overlay.conf` (see
+[`docs/persistence-strategy.md`](../../../docs/persistence-strategy.md) §7).
 
-## Technical Details
+| Array | Meaning |
+|---|---|
+| `SYNC_FILES` | `<persist-basename>:<rootfs-path>` entries copy-restored at boot and watched at runtime |
+| `BIND_MOUNTS` | `<persist-basename>:<rootfs-path>` directory bind mounts |
+| `SSH_HOST_KEYS` | Basenames under `/adu/system/ssh/` to restore into `/etc/ssh/` |
+| `OVERLAY_DIRS` | Paths to cover with overlayfs (best-effort) |
+| `WATCHER_DEBOUNCE` | Seconds the watcher waits before syncing a burst of changes |
 
-- **Systemd Service**: `adu-persistent-overlay.service`
-- **Priority**: Runs early in boot (sysinit.target)
-- **OverlayFS Module**: Automatically loaded when mounting
-- **Execution Order**: Overlays mounted first, then bind mounts overlay
+---
 
-## Related Files
+## Tests
 
-- Service: `/lib/systemd/system/adu-persistent-overlay.service`
-- Scripts: `/usr/lib/adu/mount-overlays.sh`, `mount-critical-binds.sh`
-- Config: `/etc/adu/overlay.conf`
-- Docs: `/usr/share/doc/adu-persistent-overlay/README.md`
+Hermetic unit tests live in
+`recipes-support/adu-persistent-overlay/tests/test_persistence_scripts.sh`
+and can be run on a developer host without bitbake:
+
+```bash
+cd recipes-support/adu-persistent-overlay/tests
+./test_persistence_scripts.sh
+```
+
+End-to-end test matrix (manual): see
+[`docs/persistence-strategy.md`](../../../docs/persistence-strategy.md) §8.2.
+
+---
+
+## Related documentation
+
+- [`docs/persistence-strategy.md`](../../../docs/persistence-strategy.md) —
+  Why, How, What of the overall design.
+- [`docs/architecture-decision.md`](../../../docs/architecture-decision.md) —
+  A/B update architecture that this layer plugs into.
+- [`docs/porting-guide.md`](../../../docs/porting-guide.md) —
+  Steps to add a new BSP.

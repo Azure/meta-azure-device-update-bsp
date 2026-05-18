@@ -30,6 +30,17 @@ mkdir -p "${WORK_BASE}"
 mkdir -p "${SYSTEM_DIR}"
 mkdir -p "${PERSIST_BASE}/.backups"
 
+# Pre-create /adu/conf/certs so customers can drop in X.509 device certs
+# at the upstream-documented path /etc/adu/certs/ (which is /adu/conf/certs/
+# via the /etc/adu -> /adu/conf symlink created by adu-config-setup).
+# See: Azure/iot-hub-device-update docs/agent-reference/how-to-x509-authentication.md
+if [ -d "${PERSIST_BASE}/conf" ]; then
+    mkdir -p "${PERSIST_BASE}/conf/certs"
+    chown adu:adu "${PERSIST_BASE}/conf/certs" 2>/dev/null || true
+    chmod 0750 "${PERSIST_BASE}/conf/certs"
+    echo "✓ /adu/conf/certs ready (exposed as /etc/adu/certs/ via symlink)"
+fi
+
 # NOTE: /adu/data directory structure is created by adu-filesystem-layout service
 # This service (adu-persistent-overlay) runs after adu-filesystem-layout
 # We just verify the directories exist and fix ownership if needed
@@ -126,73 +137,34 @@ if [ -n "${BIND_MOUNTS}" ]; then
                             # Preserve original permissions
                             ;;
                     esac
-                    # Record rootfs sha256 fingerprint so subsequent boots can
-                    # distinguish an intentional image-level rotation of these
-                    # auth files (refresh persistent) from a runtime change
-                    # made by the user (keep persistent).
-                    case "$(basename ${target})" in
-                        shadow|passwd|group|gshadow)
-                            sha256sum "${target}" | awk '{print $1}' > "${source_path}.rootfs.sha256"
-                            chmod 600 "${source_path}.rootfs.sha256"
-                            ;;
-                    esac
                 fi
             else
-                # Target does not exist in the rootfs (e.g. /etc/apt/* on images
-                # that do not install apt). Skip seeding — mount-critical-binds.sh
-                # will then see no source under ${SYSTEM_DIR} and skip the bind
-                # mount, avoiding wrong-type (file-vs-dir) mounts being grafted
-                # onto /etc.
-                echo "  [skip] Target ${target} not present in rootfs; not seeding ${source_path}"
+                echo "WARNING: Target ${target} does not exist, creating placeholder"
+                if [[ "${target}" == */ ]] || [ -d "$(dirname ${target})/$(basename ${target})" ]; then
+                    mkdir -p "${source_path}"
+                else
+                    touch "${source_path}"
+                fi
             fi
         else
-            # Persistent copy exists. Decide who wins between the persistent
-            # /adu/system/<file> and the new rootfs /etc/<file> for auth files.
-            #
-            #   - First boot ever: persistent did not exist -> seeded above.
-            #   - Re-run with SAME image as last seed: persistent must win,
-            #     otherwise we clobber whatever the user did at runtime
-            #     (e.g. `passwd root`) on every boot.
-            #   - After an A/B swap to a NEW image where the maintainer
-            #     intentionally rotated /etc/shadow: rootfs must win so the
-            #     image-level credential rotation takes effect.
-            #
-            # We distinguish the two cases via a sha256 fingerprint of the
-            # rootfs file recorded at the moment of last seed/refresh.
+            # File exists - check if we should update from rootfs (e.g., password changed in image)
+            # For authentication files, update if rootfs version is different and not default
             case "$(basename ${target})" in
-                shadow|passwd|group|gshadow)
+                shadow|passwd)
                     if [ -f "${target}" ] && [ -f "${source_path}" ]; then
-                        seed_marker="${source_path}.rootfs.sha256"
-                        current_rootfs_sha=$(sha256sum "${target}" | awk '{print $1}')
-                        recorded_sha=""
-                        [ -f "${seed_marker}" ] && recorded_sha=$(cat "${seed_marker}")
-
-                        if [ -z "${recorded_sha}" ]; then
-                            # Persistent file exists but no marker — upgrade path
-                            # from older overlay versions. Adopt current rootfs
-                            # as the baseline WITHOUT touching the persistent
-                            # copy: on uncertainty, user data wins.
-                            echo "${current_rootfs_sha}" > "${seed_marker}"
-                            chmod 600 "${seed_marker}"
-                            echo "  [marker] Adopted current rootfs sha for ${target} (preserving persistent copy)"
-                        elif [ "${current_rootfs_sha}" != "${recorded_sha}" ]; then
-                            # Image rotated this file. Refresh persistent.
-                            echo "  [refresh] Image rotated ${target} (sha changed); refreshing persistent copy"
-                            cp -a "${target}" "${source_path}"
-                            case "$(basename ${target})" in
-                                shadow|gshadow)
+                        # Compare with rootfs version - if different, it may be an intentional update
+                        if ! cmp -s "${target}" "${source_path}" 2>/dev/null; then
+                            # Check if rootfs shadow has non-empty password for root
+                            if [ "$(basename ${target})" = "shadow" ]; then
+                                root_hash=$(grep "^root:" "${target}" | cut -d: -f2)
+                                if [ -n "$root_hash" ] && [ "$root_hash" != "*" ] && [ "$root_hash" != "!" ]; then
+                                    echo "Updating ${source_path} from rootfs (password changed in image)"
+                                    cp -a "${target}" "${source_path}"
                                     chmod 640 "${source_path}"
                                     chown root:shadow "${source_path}" 2>/dev/null || chown root:root "${source_path}"
-                                    ;;
-                                passwd|group)
-                                    chmod 644 "${source_path}"
-                                    chown root:root "${source_path}"
-                                    ;;
-                            esac
-                            echo "${current_rootfs_sha}" > "${seed_marker}"
-                            chmod 600 "${seed_marker}"
+                                fi
+                            fi
                         fi
-                        # else: image unchanged -> persistent wins, do nothing.
                     fi
                     ;;
             esac
