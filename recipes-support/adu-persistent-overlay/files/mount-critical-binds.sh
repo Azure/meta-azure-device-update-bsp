@@ -4,8 +4,9 @@
 # Don't use set -e - we want to attempt all mounts even if some fail
 set +e
 
-# Load configuration
-# Use direct path to avoid dependency on /etc/adu symlink creation
+# Load configuration from rootfs path (installed by the recipe).
+# Do NOT use /etc/adu/overlay.conf since /etc/adu is a runtime symlink that
+# may not exist yet when this script runs.
 source /etc/overlay/overlay.conf
 
 echo "=== Mounting ADU Critical Bind Mounts ==="

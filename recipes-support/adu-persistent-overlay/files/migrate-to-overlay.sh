@@ -3,8 +3,7 @@
 
 set -e
 
-# Load configuration
-# Use direct path to avoid dependency on /etc/adu symlink creation
+# Load configuration from rootfs path (installed by the recipe).
 source /etc/overlay/overlay.conf
 
 echo "============================================"
