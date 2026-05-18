@@ -6,7 +6,7 @@ set +e
 
 # Load configuration
 # Use direct path to avoid dependency on /etc/adu symlink creation
-source /adu/conf/overlay.conf
+source /etc/overlay/overlay.conf
 
 echo "=== Mounting ADU Critical Bind Mounts ==="
 

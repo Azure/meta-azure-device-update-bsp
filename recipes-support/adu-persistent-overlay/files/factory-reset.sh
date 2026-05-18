@@ -2,7 +2,7 @@
 # Factory reset - remove all persistent changes and revert to pristine rootfs state
 
 # Load configuration
-source /adu/conf/overlay.conf 2>/dev/null || {
+source /etc/overlay/overlay.conf 2>/dev/null || {
     PERSIST_BASE="/adu"
     OVERLAY_BASE="${PERSIST_BASE}/overlay"
     SYSTEM_DIR="${PERSIST_BASE}/system"

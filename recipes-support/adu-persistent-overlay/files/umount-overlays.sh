@@ -2,7 +2,7 @@
 # Unmount overlays and bind mounts (for service stop/restart)
 
 # Load configuration
-source /adu/conf/overlay.conf 2>/dev/null || {
+source /etc/overlay/overlay.conf 2>/dev/null || {
     # Fallback defaults if config not available
     OVERLAY_DIRS=("/etc" "/var/log")
     BIND_MOUNTS=("passwd:/etc/passwd" "shadow:/etc/shadow" "group:/etc/group" "gshadow:/etc/gshadow")

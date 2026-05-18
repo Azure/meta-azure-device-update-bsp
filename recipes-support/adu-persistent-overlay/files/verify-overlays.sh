@@ -2,7 +2,7 @@
 # Verify overlayfs and bind mounts are active
 
 # Load configuration
-source /adu/conf/overlay.conf 2>/dev/null || {
+source /etc/overlay/overlay.conf 2>/dev/null || {
     echo "ERROR: Cannot load configuration"
     exit 1
 }
