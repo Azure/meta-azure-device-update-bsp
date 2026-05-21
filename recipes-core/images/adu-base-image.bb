@@ -18,6 +18,11 @@ IMAGE_INSTALL += " \
     adu-board-config \
 "
 
+# qemuarm64's kernel uses the QEMU virt machine and does not produce a
+# separate kernel-devicetree package — opkg fails do_rootfs with
+# "Couldn't find anything to satisfy 'kernel-devicetree'" if we keep it.
+IMAGE_INSTALL:remove:qemuarm64 = "kernel-devicetree"
+
 # Shared image settings
 IMAGE_ROOTFS_EXTRA_SPACE = "0"
 NO_RECOMMENDATIONS = "1"
