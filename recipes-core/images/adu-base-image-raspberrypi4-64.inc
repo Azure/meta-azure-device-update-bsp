@@ -18,4 +18,5 @@ IMAGE_INSTALL += " \
     yocto-a-b-update \
     azure-device-update \
     adu-config-setup \
+    adu-swupdate-hw-compat \
 "

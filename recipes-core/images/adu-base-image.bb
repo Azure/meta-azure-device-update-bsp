@@ -16,6 +16,7 @@ IMAGE_INSTALL += " \
     zstd \
     libubootenv-bin \
     adu-board-config \
+    adu-agent-service \
     run-postinsts \
 "
 
