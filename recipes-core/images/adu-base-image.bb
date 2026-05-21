@@ -17,6 +17,7 @@ IMAGE_INSTALL += " \
     libubootenv-bin \
     adu-board-config \
     adu-agent-service \
+    yocto-a-b-update \
     run-postinsts \
 "
 
