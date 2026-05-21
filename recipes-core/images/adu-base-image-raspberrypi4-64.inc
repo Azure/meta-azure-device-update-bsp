@@ -9,14 +9,10 @@ IMAGE_INSTALL += " \
     connman connman-client \
     python3 \
     nano \
-    adu-boot-validation \
     adu-persistent-overlay \
     adu-tools \
     adu-diag \
     adu-diskutil \
-    adu-swap \
-    yocto-a-b-update \
     azure-device-update \
     adu-config-setup \
-    adu-swupdate-hw-compat \
 "

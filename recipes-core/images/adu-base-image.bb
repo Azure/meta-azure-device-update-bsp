@@ -18,6 +18,9 @@ IMAGE_INSTALL += " \
     adu-board-config \
     adu-agent-service \
     yocto-a-b-update \
+    adu-boot-validation \
+    adu-swap \
+    adu-swupdate-hw-compat \
     run-postinsts \
 "
 
