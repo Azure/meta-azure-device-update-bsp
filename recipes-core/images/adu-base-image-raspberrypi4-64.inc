@@ -9,7 +9,6 @@ IMAGE_INSTALL += " \
     connman connman-client \
     python3 \
     nano \
-    rpi-u-boot-scr \
     adu-boot-validation \
     adu-persistent-overlay \
     adu-tools \
