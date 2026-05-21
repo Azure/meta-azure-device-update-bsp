@@ -1,12 +1,18 @@
 #!/bin/bash
 # Setup ADU Swap File for Delta Update Operations
-# Delta reconstruction (bspatch/applydiff) requires ~1GB RAM
-# This script creates a 2GB swap file in /adu partition
+# Delta reconstruction (bspatch/applydiff) benefits from ~1GB+ extra RAM.
+# We size the swap file adaptively: target 2GB when /adu is large enough,
+# otherwise use up to (free_space - reserve). Below a hard minimum we skip
+# swap creation entirely with a success exit — swap is an optimization,
+# not a hard requirement, and delta updates still work without it
+# (slower, more RAM pressure).
 
 set -e
 
 SWAP_FILE="/adu/swapfile"
-SWAP_SIZE_MB="2048"  # 2GB
+SWAP_TARGET_MB="2048"   # Preferred swap size (e.g. RPi with 8GB /adu)
+SWAP_MIN_MB="128"       # Below this, skip swap entirely (qemu/imx8ulp have 500M /adu)
+RESERVE_MB="100"        # Leave headroom on /adu for other uses
 LOG_FILE="/adu/health/swap-setup.log"
 ADU_UID=800
 ADU_GID=800
@@ -51,6 +57,7 @@ if [ -f "$SWAP_FILE" ]; then
         if file "$SWAP_FILE" | grep -q "swap file"; then
             swapon "$SWAP_FILE"
             log "✓ Existing swap file activated"
+            exit 0
         else
             log "WARNING: Existing file is not a valid swap file, recreating..."
             rm -f "$SWAP_FILE"
@@ -60,20 +67,26 @@ fi
 
 # Create new swap file if it doesn't exist
 if [ ! -f "$SWAP_FILE" ]; then
-    log "Creating ${SWAP_SIZE_MB}MB swap file at $SWAP_FILE"
-    
-    # Check available space in /adu
+    # Adaptive sizing based on available space in /adu
     AVAILABLE_MB=$(df -BM /adu | awk 'NR==2 {print $4}' | sed 's/M//')
-    REQUIRED_MB=$((SWAP_SIZE_MB + 100))  # Add 100MB buffer
-    
-    if [ "$AVAILABLE_MB" -lt "$REQUIRED_MB" ]; then
-        log "ERROR: Insufficient space in /adu partition"
-        log "  Available: ${AVAILABLE_MB}MB"
-        log "  Required: ${REQUIRED_MB}MB (${SWAP_SIZE_MB}MB swap + 100MB buffer)"
-        exit 1
+
+    # If there's not enough room for even a minimal swap file, skip with success.
+    # /adu sized at ~500M (qemuarm64, imx8ulp) lands here.
+    if [ "$AVAILABLE_MB" -lt "$((SWAP_MIN_MB + RESERVE_MB))" ]; then
+        log "Skipping swap setup: /adu has ${AVAILABLE_MB}MB available, below minimum ${SWAP_MIN_MB}MB+${RESERVE_MB}MB reserve"
+        log "Delta updates will run without swap (acceptable degradation)"
+        exit 0
     fi
-    
-    log "Available space: ${AVAILABLE_MB}MB (sufficient)"
+
+    # Pick the largest swap size that fits, capped at SWAP_TARGET_MB
+    SWAP_SIZE_MB="$SWAP_TARGET_MB"
+    if [ "$AVAILABLE_MB" -lt "$((SWAP_TARGET_MB + RESERVE_MB))" ]; then
+        SWAP_SIZE_MB=$((AVAILABLE_MB - RESERVE_MB))
+        log "Reduced swap size to ${SWAP_SIZE_MB}MB to fit available space (${AVAILABLE_MB}MB)"
+    fi
+
+    log "Creating ${SWAP_SIZE_MB}MB swap file at $SWAP_FILE"
+    log "Available space: ${AVAILABLE_MB}MB"
     
     # Create swap file using fallocate (faster than dd on ext4)
     log "Creating swap file..."
