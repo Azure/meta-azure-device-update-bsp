@@ -16,6 +16,7 @@ IMAGE_INSTALL += " \
     zstd \
     libubootenv-bin \
     adu-board-config \
+    run-postinsts \
 "
 
 # qemuarm64's kernel uses the QEMU virt machine and does not produce a
@@ -27,7 +28,12 @@ IMAGE_INSTALL:remove:qemuarm64 = "kernel-devicetree"
 IMAGE_ROOTFS_EXTRA_SPACE = "0"
 NO_RECOMMENDATIONS = "1"
 
-POSTINST_INTERCEPTS_DIR = "${THISDIR}/intercept-scripts"
+# NOTE: Do NOT override POSTINST_INTERCEPTS_DIR — the local copy under
+# intercept-scripts/ ships an `exit 1` delay_to_first_boot identical to
+# poky's, but the override path was missing other intercept scripts that
+# packages like glib-2.0 expect. Using the OE-Core default avoids the
+# rootfs failure: "Postinstall scriptlets ... have failed". For first-boot
+# deferral to work, the image MUST contain `run-postinsts` (added above).
 
 # Create persistent ADU data directory in rootfs
 create_adu_data_dir() {
