@@ -104,17 +104,76 @@ selection=""
 current_dev_partition=0
 update_dev_partition=0
 
-# Load board configuration for device paths
+# Load board configuration for device paths.
+#
+# Required canonical schema (must be set in /etc/adu/board.conf provided by
+# adu-board-config). yocto-a-b-update.sh fails fast in validate_board_conf()
+# if any of these are missing when a real action is requested:
+#
+#   ADU_DISK_DEVICE      e.g. /dev/mmcblk0  /dev/vda
+#   ADU_ROOT_A_DEV       e.g. /dev/mmcblk0p2
+#   ADU_ROOT_B_DEV       e.g. /dev/mmcblk0p3
+#   ADU_CMDLINE_ROOT_A   e.g. root=/dev/mmcblk0p2
+#   ADU_CMDLINE_ROOT_B   e.g. root=/dev/mmcblk0p3
+#
+# We DO NOT silently fall back to defaults — a misconfigured board would
+# otherwise be allowed to mutate U-Boot env or write to the wrong partition.
 BOARD_CONF="/etc/adu/board.conf"
 if [[ -f "$BOARD_CONF" ]]; then
     # shellcheck source=/dev/null
     . "$BOARD_CONF"
 fi
-ADU_CMDLINE_ROOT_A="${ADU_CMDLINE_ROOT_A:-root=/dev/mmcblk0p2}"
-ADU_CMDLINE_ROOT_B="${ADU_CMDLINE_ROOT_B:-root=/dev/mmcblk0p3}"
-ADU_ROOT_A_DEV="${ADU_ROOT_A_DEV:-/dev/mmcblk0p2}"
-ADU_ROOT_B_DEV="${ADU_ROOT_B_DEV:-/dev/mmcblk0p3}"
-ADU_DISK_DEVICE="${ADU_DISK_DEVICE:-/dev/mmcblk0}"
+
+# Validate that the canonical board.conf schema is complete. Called from
+# main entry just before initialize_partitions, so --help / argument-parse
+# paths still work on a misconfigured device. Logs a structured ADUC result
+# and returns non-zero on first missing field.
+validate_board_conf() {
+    if [[ ! -f "$BOARD_CONF" ]]; then
+        local resultDetails="CRITICAL: $BOARD_CONF not found. The yocto-a-b-update SWUpdate handler requires /etc/adu/board.conf (provided by adu-board-config). Refusing to proceed without an explicit board contract."
+        local extendedResultCode=0
+        local aduc_result=""
+        make_swupdate_handler_erc $SWU_BOARD_CONF_MISSING extendedResultCode "$resultDetails"
+        make_aduc_result_json 0 "$extendedResultCode" "$resultDetails" aduc_result
+        output "Result:" "$aduc_result"
+        result "$aduc_result"
+        error "$resultDetails"
+        return 1
+    fi
+
+    local missing=()
+    [[ -n "${ADU_DISK_DEVICE:-}"     ]] || missing+=("ADU_DISK_DEVICE")
+    [[ -n "${ADU_ROOT_A_DEV:-}"      ]] || missing+=("ADU_ROOT_A_DEV")
+    [[ -n "${ADU_ROOT_B_DEV:-}"      ]] || missing+=("ADU_ROOT_B_DEV")
+    [[ -n "${ADU_CMDLINE_ROOT_A:-}"  ]] || missing+=("ADU_CMDLINE_ROOT_A")
+    [[ -n "${ADU_CMDLINE_ROOT_B:-}"  ]] || missing+=("ADU_CMDLINE_ROOT_B")
+
+    if (( ${#missing[@]} > 0 )); then
+        local resultDetails="CRITICAL: $BOARD_CONF is missing required ADU_* variables: ${missing[*]}. Refusing to proceed without a complete board contract — would risk mutating the wrong partition or U-Boot env."
+        local extendedResultCode=0
+        local aduc_result=""
+        make_swupdate_handler_erc $SWU_BOARD_CONF_INCOMPLETE extendedResultCode "$resultDetails"
+        make_aduc_result_json 0 "$extendedResultCode" "$resultDetails" aduc_result
+        output "Result:" "$aduc_result"
+        result "$aduc_result"
+        error "$resultDetails"
+        return 1
+    fi
+
+    if ! command -v fw_printenv >/dev/null 2>&1 || ! command -v fw_setenv >/dev/null 2>&1; then
+        local resultDetails="CRITICAL: fw_printenv / fw_setenv not on PATH. The U-Boot env tools (libubootenv-bin) are required to perform an A/B switch."
+        local extendedResultCode=0
+        local aduc_result=""
+        make_swupdate_handler_erc $SWU_UBOOT_TOOLS_MISSING extendedResultCode "$resultDetails"
+        make_aduc_result_json 0 "$extendedResultCode" "$resultDetails" aduc_result
+        output "Result:" "$aduc_result"
+        result "$aduc_result"
+        error "$resultDetails"
+        return 1
+    fi
+
+    return 0
+}
 
 # Shared lock file for U-Boot environment access
 UBOOT_LOCK_FILE="/var/lock/adu-uboot-env.lock"
@@ -466,6 +525,11 @@ SWU_IMAGE_VERSION_FILE_READ_ERROR=104
 SWU_ARGUMENT_PARSE_ERROR=200
 SWU_MISSING_REQUIRED_ARGUMENT=201
 SWU_CRITICAL_NO_RESULT_FILE=202
+
+# Board.conf / environment validation (validate_board_conf).
+SWU_BOARD_CONF_MISSING=300
+SWU_BOARD_CONF_INCOMPLETE=301
+SWU_UBOOT_TOOLS_MISSING=302
 
 #
 # Array to accumulate argument parsing errors
@@ -1402,6 +1466,9 @@ fi
 
 # Initialize partition detection before any operation that needs it
 if [ -n "$do_install_action" ] || [ -n "$do_apply_action" ] || [ -n "$do_cancel_action" ]; then
+    if ! validate_board_conf; then
+        exit 1
+    fi
     if ! initialize_partitions; then
         exit 1
     fi

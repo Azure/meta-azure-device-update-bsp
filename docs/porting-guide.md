@@ -35,15 +35,34 @@ If your board is built into poky (like QEMU), use `boards/<machine>/` instead.
 Create `recipes-support/adu-board-config/files/<MACHINE>/board.conf`:
 
 ```bash
-# Device and partition layout
-BOOT_DEVICE=/dev/mmcblk0        # or /dev/sda, /dev/vda, etc.
-ROOT_A_DEVICE=${BOOT_DEVICE}p2
-ROOT_B_DEVICE=${BOOT_DEVICE}p3
-DATA_DEVICE=${BOOT_DEVICE}p4
+# Canonical ADU board.conf schema (also used by qemuarm64 and raspberrypi4-64).
+# yocto-a-b-update.sh fails fast if any of these are missing.
 
-# U-Boot settings
-BOOT_MEDIA=mmc                  # mmc, virtio, scsi, etc.
-UBOOT_ENV_FILE=/boot/uboot.env
+# Disk device (as seen by Linux)
+ADU_DISK_DEVICE=/dev/mmcblk0          # or /dev/sda, /dev/vda, etc.
+
+# Root partition devices
+ADU_ROOT_A_DEV=/dev/mmcblk0p2
+ADU_ROOT_B_DEV=/dev/mmcblk0p3
+
+# Data partition
+ADU_DATA_DEV=/dev/mmcblk0p4
+
+# Boot partition mount point
+ADU_BOOT_MOUNT=/boot
+
+# /proc/cmdline matching
+ADU_CMDLINE_ROOT_A="root=/dev/mmcblk0p2"
+ADU_CMDLINE_ROOT_B="root=/dev/mmcblk0p3"
+
+# U-Boot boot media (as seen by U-Boot)
+ADU_UBOOT_MEDIA=mmc                   # mmc, virtio, scsi, etc.
+ADU_UBOOT_DEVICE=0
+ADU_UBOOT_BOOT_PART=0:1
+
+# U-Boot environment location (file: FAT file-backed)
+ADU_UBOOT_ENV_TYPE=file
+ADU_UBOOT_ENV_FILE=/boot/uboot.env
 ```
 
 ### 3. Create the image include
