@@ -18,4 +18,7 @@ do_install() {
 
 FILES:${PN} += "${sysconfdir}/adu-swupdate-hw-compat"
 
-inherit allarch
+# Package contents embed ${MACHINE} and ${HW_REV}, so the package is
+# machine-specific. Using PACKAGE_ARCH = MACHINE_ARCH prevents sstate /
+# package-feed reuse across boards from producing the wrong compat string.
+PACKAGE_ARCH = "${MACHINE_ARCH}"
