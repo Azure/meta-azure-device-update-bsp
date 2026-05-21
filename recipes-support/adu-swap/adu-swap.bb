@@ -12,7 +12,7 @@ S = "${WORKDIR}"
 
 inherit systemd
 
-RDEPENDS:${PN} += "bash"
+RDEPENDS:${PN} += "bash coreutils util-linux util-linux-mkswap util-linux-swapon util-linux-fallocate file"
 
 SYSTEMD_SERVICE:${PN} = "adu-swap.service"
 SYSTEMD_AUTO_ENABLE = "enable"

@@ -2,8 +2,9 @@
 Description=Setup ADU Swap File for Delta Updates
 Documentation=man:adu-swap(8)
 After=adu.mount
-Requires=adu.mount
-Before=adu-agent.service
+Wants=adu.mount
+Before=deviceupdate-agent.service
+ConditionPathIsMountPoint=/adu
 
 [Service]
 Type=oneshot

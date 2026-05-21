@@ -2,7 +2,7 @@
 Description=ADU Boot Validation - Rollback detection and health checks for A/B updates
 Documentation=https://github.com/Azure/iot-hub-device-update
 After=local-fs.target network.target
-Before=deviceupdate-agent.service multi-user.target
+Before=deviceupdate-agent.service
 Wants=network.target
 ConditionPathExists=/usr/bin/adu-boot-validation.sh
 
