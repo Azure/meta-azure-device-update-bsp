@@ -22,7 +22,11 @@ part --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootB --align 4096 -
 # This partition allows configuration and logs to persist across updates (similar to a user data partition).
 # The ext4 file type provides proper ACL support, journaling, and reliability.
 # Size set to 8GB to support delta update staging (needs ~2GB for rootfs reconstruction) + 2GB swap file.
-part /adu --ondisk mmcblk0 --fstype=ext4 --label adu --align 4096 --size 8192
+# --no-fstab-update: /etc/fstab is owned by base-files (raspberrypi4-64/fstab).
+# Without this, wic appends a second /adu entry → systemd-fstab-generator
+# fails ("Duplicate entry in /etc/fstab") on every daemon-reload, which on
+# slow targets starves sshd-keygen of CPU and prevents SSH from coming up.
+part /adu --ondisk mmcblk0 --fstype=ext4 --label adu --align 4096 --size 8192 --no-fstab-update
 
 # Optional customer data partition for application-specific data storage.
 # FAT32 allows easy access from multiple operating systems.

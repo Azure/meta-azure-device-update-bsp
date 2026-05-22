@@ -8,6 +8,10 @@
 part /boot --source bootimg-partition --ondisk vda --fstype=vfat --label boot --active --align 4096 --size 100M
 part / --source rootfs --ondisk vda --fstype=ext4 --label rootA --align 4096 --size 1500M
 part --ondisk vda --fstype=ext4 --label rootB --align 4096 --size 1500M
-part /adu --ondisk vda --fstype=ext4 --label adu --align 4096 --size 500M --fsoptions "defaults,noatime"
+# --no-fstab-update: /etc/fstab is owned by base-files (with nofail option for
+# bring-up resilience). Without this flag, wic would auto-append a second
+# /adu entry, causing systemd-fstab-generator to emit "Duplicate entry in
+# /etc/fstab" at every daemon-reload and starving sshd-keygen of CPU.
+part /adu --ondisk vda --fstype=ext4 --label adu --align 4096 --size 500M --fsoptions "defaults,noatime" --no-fstab-update
 
 bootloader --ptable gpt
