@@ -25,6 +25,7 @@ IMAGE_INSTALL += " \
     sudo \
     openssh \
     systemd-conf-qemu \
+    util-linux-findmnt \
     python3 \
     nano \
     qemu-u-boot-scr \
