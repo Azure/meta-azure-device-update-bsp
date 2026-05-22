@@ -24,7 +24,7 @@ IMAGE_INSTALL += " \
     adu-persistent-overlay \
     sudo \
     openssh \
-    connman connman-client \
+    systemd-conf-qemu \
     python3 \
     nano \
     qemu-u-boot-scr \
