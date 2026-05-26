@@ -1,7 +1,7 @@
 # Raspberry Pi 4 (64-bit) image configuration
 WKS_FILE:raspberrypi4-64 = "adu-raspberrypi.wks"
 
-IMAGE_FSTYPES += "wic wic.bmap ext4.gz"
+IMAGE_FSTYPES += "wic wic.gz wic.bmap ext4.gz"
 
 IMAGE_INSTALL += " \
     sudo \
